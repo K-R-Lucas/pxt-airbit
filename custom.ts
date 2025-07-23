@@ -1,10 +1,3 @@
-/**
- * Functions are mapped to blocks using various macros
- * in comments starting with %. The most important macro
- * is "block", and it specifies that a block should be
- * generated for an **exported** function.
- */
-
 //% color="#07c3aa" weight=100
 namespace AirBit {
     interface Vector3 {
@@ -115,12 +108,113 @@ namespace AirBit {
         tilted: false
     }
 
-    let drone: Drone;
-    let pca: PCA;
-    let acc: Acc;
-    let gyro: Gyro;
-    let timer: Timer;
-    let pid: PID;
+    let drone: Drone = {
+        throttle: 0,
+        throttleScaled: 0,
+        motors: {
+            M0: 0,
+            M1: 0,
+            M2: 0,
+            M3: 0
+        },
+        battery_voltage: 0,
+        roll: 0,
+        pitch: 0,
+        yaw: 0
+    };
+
+    let pca: PCA = {
+        address: 0x62,
+        leduot: 0x08,
+        mode1: 0x00,
+        mode2: 0x01,
+        pwm0: 0x02,
+        pwm1: 0x03,
+        pwm2: 0x04,
+        pwm3: 0x05,
+        mode2_config: 0x05,
+        return_id: 0x00
+    }
+    
+    let acc: Acc = {
+        x: 0,
+        y: 0,
+        z: 0,
+        roll: 0,
+        pitch: 0,
+        yaw: 0,
+        calibration: {
+            x: 0,
+            y: 0,
+            z: 0
+        },
+        pitch_offset: 0,
+        roll_offset: 0
+    };
+
+    let gyro: Gyro = {
+        return_id: 0,
+        x: 0,
+        y: 0,
+        z: 0,
+        roll: 0,
+        pitch: 0,
+        yaw: 0,
+        calibration: {
+            x: 0,
+            y: 0,
+            z: 0
+        },
+        delta: {
+            x: 0,
+            y: 0,
+            z: 0
+        }
+    };
+
+    let timer: Timer = {
+        t0: 0,
+        t1: 0,
+        dt: 0,
+        radio_t0: 0,
+        radio_t1: 0,
+        radio_dt: 0
+    };
+
+    let pid: PID = {
+        delta: {
+            roll: 0,
+            pitch: 0,
+            yaw: 0
+        },
+
+        last: {
+            roll: 0,
+            pitch: 0,
+            yaw: 0
+        },
+
+        correction: {
+            roll: 0,
+            pitch: 0,
+            yaw: 0
+        },
+
+        integral: {
+            roll: 0,
+            pitch: 0,
+            yaw: 0
+        },
+
+        roll: 0,
+        pitch: 0,
+        yaw: 0,
+
+        integral_range: 5,
+        integral_limit: 4,
+        yaw_correction_limit: 50
+    };
+
     let settings: Settings = {
         pid: {
             roll_pitch_p: 0.7,
@@ -164,33 +258,6 @@ namespace AirBit {
     //% block
     export function initialise() {
         i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
-        basic.forever(watchSafety);
-
-        radio.onDataReceived(checkCommunication)
-
-        radio.onReceivedString(
-            function (in_string) {
-                if (safety.estop) return;
-                
-                if (in_string == "e") {
-                    safety.estop = true;
-                }
-
-                switch (in_string) {
-                    case 'e':
-                        safety.estop = true;
-                        break;
-                    
-                    case 'a':
-                        arm();
-                        break;
-
-                    case 'd':
-                        disarm();
-                        break;
-                }
-            }
-        )
 
         pid = {
             delta: {
@@ -300,19 +367,6 @@ namespace AirBit {
             }
         }
 
-        pca = {
-            address: 0x62,
-            leduot: 0x08,
-            mode1: 0x00,
-            mode2: 0x01,
-            pwm0: 0x02,
-            pwm1: 0x03,
-            pwm2: 0x04,
-            pwm3: 0x05,
-            mode2_config: 0x05,
-            return_id: 0
-        }
-
         basic.clearScreen();
 
         if (gyro.return_id >> 8) {
@@ -361,8 +415,36 @@ namespace AirBit {
             imu.acc_config << 8 | 0x05,
             NumberFormat.UInt16BE, false
         );
+        
+        radio.onDataReceived(checkCommunication)
+        basic.forever(watchSafety);
+
+        radio.onReceivedString(
+            function (in_string) {
+                if (safety.estop) return;
+                
+                if (in_string == "e") {
+                    safety.estop = true;
+                }
+
+                switch (in_string) {
+                    case 'e':
+                        safety.estop = true;
+                        break;
+                    
+                    case 'a':
+                        arm();
+                        break;
+
+                    case 'd':
+                        disarm();
+                        break;
+                }
+            }
+        )
     }
 
+    //% block
     export function arm() {
         if (safety.estop) return;
 
@@ -391,6 +473,7 @@ namespace AirBit {
         }
     }
 
+    //% block
     export function disarm() {
         safety.armed = false;
 
