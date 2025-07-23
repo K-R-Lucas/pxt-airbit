@@ -100,6 +100,11 @@ namespace AirBit {
         low_battery: boolean,
         tilted: boolean
     }
+
+    interface Bar {
+        address: number,
+        return_id: number
+    }
     
     let safety: Safety = {
         estop: false,
@@ -237,6 +242,11 @@ namespace AirBit {
         bar_address: 0x63
     }
 
+    let bar: Bar = {
+        address: 0x63,
+        return_id: 0
+    }
+
     function checkCommunication() {
         timer.radio_t1 = input.runningTime();
         timer.radio_dt = timer.radio_t1 - timer.radio_t0;
@@ -256,9 +266,12 @@ namespace AirBit {
     }
 
     //% block
+    //& group="Setup"
     export function initialise() {
-        i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
+        if (safety.estop) return;
 
+        i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
+        
         pid = {
             delta: {
                 roll: 0,
@@ -370,9 +383,9 @@ namespace AirBit {
         basic.clearScreen();
 
         if (gyro.return_id >> 8) {
-            basic.showString("Gyro found!");
+            basic.showString("Gyroscope found!");
         } else {
-            basic.showString("Gyro not found!", 50);
+            basic.showString("No gyroscope found!", 50);
         }
 
         // Set clock
@@ -415,6 +428,32 @@ namespace AirBit {
             imu.acc_config << 8 | 0x05,
             NumberFormat.UInt16BE, false
         );
+
+        bar = {
+            address: 0x63,
+            return_id: 0
+        };
+
+        /// Start the barometer
+        pins.i2cWriteNumber(
+            bar.address, 0x805D,
+            NumberFormat.UInt16BE, true
+        );
+
+        pins.i2cWriteNumber(
+            bar.address, 0xEFC8,
+            NumberFormat.UInt16BE, true
+        );
+
+        bar.return_id = pins.i2cReadNumber(
+            bar.address, NumberFormat.UInt16LE, true
+        );
+
+        if (bar.return_id) {
+            basic.showString("Barometer found!");
+        } else {
+            basic.showString("No barometer found!");
+        }
         
         radio.onDataReceived(checkCommunication)
         basic.forever(watchSafety);
@@ -445,6 +484,7 @@ namespace AirBit {
     }
 
     //% block
+    //& group="Setup"
     export function arm() {
         if (safety.estop) return;
 
@@ -474,6 +514,7 @@ namespace AirBit {
     }
 
     //% block
+    //& group="Setup"
     export function disarm() {
         safety.armed = false;
 
@@ -486,6 +527,7 @@ namespace AirBit {
 
     //% block="Read Telemetry (gyro, accel, battery, angles) $read_gyro $read_acc $read_battery $calculate_angles"
     //% inlineInputMode=inline
+    //& group="Data"
     export function readTelemetry(read_gyro: boolean = true, read_acc: boolean = true, read_battery: boolean = true, calculate_angles: boolean = false) {
         if (read_gyro) {
             pins.i2cWriteNumber(
@@ -532,8 +574,9 @@ namespace AirBit {
         }
     }
 
-    //% block="Motor Speed (m0, m1, m2, m3) $m0 $m1 $m2 $m3"
+    //% block="Motor Speed(m0 $m0 m1 $m1 m2 $m2 m3 $m3"
     //% inlineInputMode=inline
+    //& group="Control"
     export function setMotorSpeeds(m0: number, m1: number, m2: number, m3: number) {
         if (safety.estop || !safety.armed) return
 
@@ -574,6 +617,7 @@ namespace AirBit {
     }
 
     //% block
+    //& group="Control"
     export function stabilise() {
         if (safety.estop || !safety.armed) return
 
@@ -643,11 +687,13 @@ namespace AirBit {
     }
 
     //% block
+    //& group="Setup"
     export function connectToChannel(channel: number) {
         radio.setGroup(channel);
     }
 
     //% block
+    //& group="Setup"
     export function calibrate(samples: number = 100) {
         if (safety.estop) return;
 
@@ -680,21 +726,25 @@ namespace AirBit {
     }
 
     //% block
+    //& group="Control"
     export function setThrottle(amount: number) {
         drone.throttle = Math.min(Math.max(amount, 0), 100);
     }
 
     //% block
+    //& group="Control"
     export function setPitch(amount: number) {
         drone.pitch = Math.min(Math.max(amount, -45), 45);
     }
 
     //% block
+    //& group="Control"
     export function setRoll(amount: number) {
         drone.roll = Math.min(Math.max(amount, -45), 45);
     }
 
     //% block
+    //& group="Control"
     export function setYaw(amount: number) {
         drone.yaw = amount;
     }
