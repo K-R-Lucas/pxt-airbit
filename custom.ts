@@ -5,27 +5,30 @@
  * generated for an **exported** function.
  */
 
-//% color="#2DD635" weight=100
+//% color="#07c3aa" weight=100
 namespace AirBit {
     interface Vector3 {
-        x: number;
-        y: number;
-        z: number;
+        x: number,
+        y: number,
+        z: number
     }
 
-    interface Gyro extends Vector3 {
+    interface EulerAngles {
+        roll: number,
+        pitch: number,
+        yaw: number
+    }
+
+    interface Gyro extends Vector3, EulerAngles {
         return_id: number,
         calibration: Vector3,
-        delta: Vector3,
-        roll: number,
-        pitch: number,
-        yaw: number
+        delta: Vector3
     }
 
-    interface Acc extends Vector3 {
-        roll: number,
-        pitch: number,
-        yaw: number
+    interface Acc extends Vector3, EulerAngles {
+        calibration: Vector3,
+        pitch_offset: number,
+        roll_offset: number
     }
 
     interface IMU {
@@ -42,12 +45,92 @@ namespace AirBit {
 
     interface PCA {
         address: number,
-        
+        leduot: number,
+        mode1: number,
+        mode2: number,
+        pwm0: number,
+        pwm1: number,
+        pwm2: number,
+        pwm3: number,
+        mode2_config: number,
+        return_id: number
     }
 
+    interface Timer {
+        t0: number,
+        t1: number,
+        dt: number,
+        radio_t0: number,
+        radio_t1: number,
+        radio_dt: number
+    }
+
+    interface PID extends EulerAngles {
+        delta: EulerAngles,
+        last: EulerAngles,
+        correction: EulerAngles,
+        integral: EulerAngles,
+        integral_range: number,
+        integral_limit: number,
+        yaw_correction_limit: number,
+    }
+
+    interface Motors {
+        M0: number,
+        M1: number,
+        M2: number,
+        M3: number
+    }
+
+    interface Drone extends EulerAngles {
+        throttle: number,
+        throttleScaled: number,
+        motors: Motors,
+        battery_voltage: number
+    }
+
+    interface PIDSettings {
+        roll_pitch_p: number,
+        roll_pitch_i: number,
+        roll_pitch_d: number,
+        yaw_p: number,
+        yaw_d: number
+    }
+
+    interface Settings {
+        pid: PIDSettings
+    }
+
+    interface Safety {
+        estop: boolean,
+        armed: boolean,
+        low_battery: boolean,
+        tilted: boolean
+    }
+    
+    let safety: Safety = {
+        estop: false,
+        armed: false,
+        low_battery: false,
+        tilted: false
+    }
+
+    let drone: Drone;
+    let pca: PCA;
     let acc: Acc;
     let gyro: Gyro;
-    let estop: boolean = false;
+    let timer: Timer;
+    let pid: PID;
+    let settings: Settings = {
+        pid: {
+            roll_pitch_p: 0.7,
+            roll_pitch_i: 0.004,
+            roll_pitch_d: 15,
+            yaw_p: 4,
+            yaw_d: 10
+        }
+    };
+
     const imu: IMU = {
         address: 0x68,
         config: 0x01,
@@ -60,8 +143,114 @@ namespace AirBit {
         bar_address: 0x63
     }
 
+    function checkCommunication() {
+        timer.radio_t1 = input.runningTime();
+        timer.radio_dt = timer.radio_t1 - timer.radio_t0;
+        timer.radio_t0 = timer.radio_t1;
+
+        if (timer.radio_dt >= 5000) {
+            disarm();
+        }
+    }
+
+    function watchSafety() {
+        readTelemetry(true, true, true, true);
+
+        if ((Math.abs(gyro.roll) >= 90) || (Math.abs(gyro.pitch) >= 90)) {
+            disarm();
+        }
+    }
+
     //% block
     export function initialise() {
+        i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
+        basic.forever(watchSafety);
+
+        radio.onDataReceived(checkCommunication)
+
+        radio.onReceivedString(
+            function (in_string) {
+                if (safety.estop) return;
+                
+                if (in_string == "e") {
+                    safety.estop = true;
+                }
+
+                switch (in_string) {
+                    case 'e':
+                        safety.estop = true;
+                        break;
+                    
+                    case 'a':
+                        arm();
+                        break;
+
+                    case 'd':
+                        disarm();
+                        break;
+                }
+            }
+        )
+
+        pid = {
+            delta: {
+                roll: 0,
+                pitch: 0,
+                yaw: 0
+            },
+
+            last: {
+                roll: 0,
+                pitch: 0,
+                yaw: 0
+            },
+
+            correction: {
+                roll: 0,
+                pitch: 0,
+                yaw: 0
+            },
+
+            integral: {
+                roll: 0,
+                pitch: 0,
+                yaw: 0
+            },
+
+            roll: 0,
+            pitch: 0,
+            yaw: 0,
+
+            integral_range: 5,
+            integral_limit: 4,
+            yaw_correction_limit: 50
+        }
+
+        let t = input.runningTime();
+        timer = {
+            t0: t,
+            t1: t,
+            dt: 0,
+            radio_t0: t,
+            radio_t1: t,
+            radio_dt: 0
+        }
+
+        drone = {
+            throttle: 0,
+            throttleScaled: 0,
+            motors: {
+                M0: 0,
+                M1: 0,
+                M2: 0,
+                M3: 0
+            },
+            battery_voltage: 0,
+            roll: 0,
+            pitch: 0,
+            yaw: 0
+        }
+
         // Reset IMU
         pins.i2cWriteNumber(
             imu.address,
@@ -81,7 +270,14 @@ namespace AirBit {
             z: 0,
             roll: 0,
             pitch: 0,
-            yaw: 0
+            yaw: 0,
+            calibration: {
+                x: 0,
+                y: 0,
+                z: 0
+            },
+            pitch_offset: 0,
+            roll_offset: 0
         }
 
         gyro = {
@@ -91,15 +287,38 @@ namespace AirBit {
             z: 0,
             roll: 0,
             pitch: 0,
-            yaw: 0
+            yaw: 0,
+            calibration: {
+                x: 0,
+                y: 0,
+                z: 0
+            },
+            delta: {
+                x: 0,
+                y: 0,
+                z: 0
+            }
+        }
+
+        pca = {
+            address: 0x62,
+            leduot: 0x08,
+            mode1: 0x00,
+            mode2: 0x01,
+            pwm0: 0x02,
+            pwm1: 0x03,
+            pwm2: 0x04,
+            pwm3: 0x05,
+            mode2_config: 0x05,
+            return_id: 0
         }
 
         basic.clearScreen();
 
         if (gyro.return_id >> 8) {
-            basic.showString("Gyro found");
+            basic.showString("Gyro found!");
         } else {
-            basic.showString("Gyro not found", 50);
+            basic.showString("Gyro not found!", 50);
         }
 
         // Set clock
@@ -144,81 +363,350 @@ namespace AirBit {
         );
     }
 
-    //% block
-    export function readSensors() {
-        pins.i2cWriteNumber(
-            imu.address, 0x43,
-            NumberFormat.Int8LE, true
-        );
+    export function arm() {
+        if (safety.estop) return;
 
-        gyro.x = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
-        gyro.y = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
-        gyro.z = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, false);
+        safety.armed = true;
+
+        initialise();
+
+        writePca(pca.mode1, 0x80);
+        writePca(pca.mode2, pca.mode2_config);
+        writePca(pca.leduot, 0xAA);
+
+        setMotorSpeeds(0, 0, 0, 0);
 
         pins.i2cWriteNumber(
-            0x68, 0x3B,
-            NumberFormat.Int8LE, true
+            pca.address, pca.mode2,
+            NumberFormat.UInt8BE, true
         )
 
-        acc.x = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
-        acc.y = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
-        acc.z = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, false);
+        pca.return_id = pins.i2cReadNumber(pca.address, NumberFormat.UInt8BE, false);
+
+        basic.clearScreen();
+        if (pca.return_id) {
+            basic.showString("PCA found!");
+        } else {
+            basic.showString("PCA not found!", 50);
+        }
+    }
+
+    export function disarm() {
+        safety.armed = false;
+
+        setMotorSpeeds(0, 0, 0, 0);
+
+        writePca(pca.mode1, 0x80);
+        writePca(pca.mode2, pca.mode2_config);
+        writePca(pca.leduot, 0xAA);
+    }
+
+    //% block="Read Telemetry (gyro, accel, battery, angles) $read_gyro $read_acc $read_battery $calculate_angles"
+    //% inlineInputMode=inline
+    export function readTelemetry(read_gyro: boolean = true, read_acc: boolean = true, read_battery: boolean = true, calculate_angles: boolean = false) {
+        if (read_gyro) {
+            pins.i2cWriteNumber(
+                imu.address, 0x43,
+                NumberFormat.Int8LE, true
+            );
+
+            gyro.x = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
+            gyro.y = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
+            gyro.z = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, false);
+        }
+
+        if (read_acc) {
+            pins.i2cWriteNumber(
+                0x68, 0x3B,
+                NumberFormat.Int8LE, true
+            );
+
+            acc.x = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
+            acc.y = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, true);
+            acc.z = pins.i2cReadNumber(0x68, NumberFormat.Int16BE, false);
+        }
+
+        if (read_battery) {
+            drone.battery_voltage = pins.analogReadPin(AnalogPin.P0) * 0.00594;
+        }
+
+        if (calculate_angles) {
+            timer.t1 = input.runningTime();
+            timer.dt = timer.t1 - timer.t0;
+            timer.t0 = timer.t1;
+
+            acc.pitch = -57.295*Math.atan2(acc.y, acc.z) - acc.pitch_offset;
+            acc.roll = -57.295*Math.atan2(acc.x, acc.z) -acc.roll_offset;
+            
+            let temp = -0.00000762939*timer.dt;
+            gyro.delta.x = temp*(gyro.x - gyro.calibration.x);
+            gyro.delta.y = -temp*(gyro.y - gyro.calibration.y);
+            gyro.delta.z = temp*(gyro.z - gyro.calibration.z);
+
+            gyro.roll = 0.01*acc.roll + 0.99*(gyro.delta.y + gyro.roll);
+            gyro.pitch = 0.01*acc.pitch + 0.99*(gyro.delta.x + gyro.pitch);
+            gyro.yaw += gyro.delta.y;
+        }
+    }
+
+    //% block="Motor Speed (m0, m1, m2, m3) $m0 $m1 $m2 $m3"
+    //% inlineInputMode=inline
+    export function setMotorSpeeds(m0: number, m1: number, m2: number, m3: number) {
+        if (safety.estop || !safety.armed) return
+
+        pins.i2cWriteNumber(
+            pca.address,
+            pca.pwm0 << 8 | m3,
+            NumberFormat.UInt16BE,
+            false
+        )
+        pins.i2cWriteNumber(
+            pca.address,
+            pca.pwm1 << 8 | m2,
+            NumberFormat.UInt16BE,
+            false
+        )
+        pins.i2cWriteNumber(
+            pca.address,
+            pca.pwm2 << 8 | m1,
+            NumberFormat.UInt16BE,
+            false
+        )
+        pins.i2cWriteNumber(
+            pca.address,
+            pca.pwm3 << 8 | m0,
+            NumberFormat.UInt16BE,
+            false
+        )
+    }
+
+    function writePca(register: number, value: number) {
+        if (safety.estop || !safety.armed)
+        pins.i2cWriteNumber(
+            pca.address,
+            register << 8 | value,
+            NumberFormat.UInt16BE,
+            false
+        )
     }
 
     //% block
     export function stabilise() {
+        if (safety.estop || !safety.armed) return
 
+        pid.roll = drone.roll - gyro.roll;
+        pid.pitch = drone.pitch - gyro.pitch;
+        pid.yaw = drone.yaw - gyro.yaw;
+
+        pid.delta.roll = pid.roll - pid.last.roll;
+        pid.delta.pitch = pid.pitch - pid.last.pitch;
+        pid.delta.yaw = pid.yaw - pid.last.yaw;
+
+        pid.last.roll = pid.roll;
+        pid.last.pitch = pid.pitch;
+        pid.last.yaw = pid.yaw;
+
+        if (drone.throttle > 50) {
+            if (Math.abs(pid.roll) < pid.integral_range) {
+                pid.integral.roll += pid.roll;
+            }
+
+            if (Math.abs(pid.pitch) < pid.integral_range) {
+                pid.integral.pitch += pid.pitch;
+            }
+        }
+
+        pid.correction.roll = Math.min(
+            Math.max(pid.integral.roll*settings.pid.roll_pitch_i, -pid.integral_limit), pid.integral_limit
+        );
+
+        pid.correction.pitch = Math.min(
+            Math.max(pid.integral.pitch*settings.pid.roll_pitch_i, -pid.integral_limit), pid.integral_limit
+        );
+
+        pid.correction.roll += pid.roll*settings.pid.roll_pitch_p + pid.delta.roll*settings.pid.roll_pitch_d;
+        pid.correction.pitch += pid.pitch*settings.pid.roll_pitch_p + pid.delta.pitch*settings.pid.roll_pitch_d;
+        pid.correction.yaw = Math.min(
+            Math.max(pid.yaw*settings.pid.yaw_p + pid.delta.yaw*settings.pid.yaw_d, -pid.yaw_correction_limit), pid.yaw_correction_limit
+        );
+
+        drone.throttleScaled = 2.55*drone.throttle;
+
+        drone.motors.M0 = Math.min(
+            Math.max(
+                Math.round(drone.throttleScaled + pid.correction.roll + pid.correction.pitch + pid.correction.yaw), 0
+            ), 255
+        );
+
+        drone.motors.M1 = Math.min(
+            Math.max(
+                Math.round(drone.throttleScaled + pid.correction.roll - pid.correction.pitch - pid.correction.yaw), 0
+            ), 255
+        );
+
+        drone.motors.M2 = Math.min(
+            Math.max(
+                Math.round(drone.throttleScaled - pid.correction.roll + pid.correction.pitch + pid.correction.yaw), 0
+            ), 255
+        );
+
+        drone.motors.M3 = Math.min(
+            Math.max(
+                Math.round(drone.throttleScaled - pid.correction.roll - pid.correction.pitch + pid.correction.yaw), 0
+            ), 255
+        );
+
+        setMotorSpeeds(drone.motors.M0, drone.motors.M1, drone.motors.M2, drone.motors.M3);
     }
 
     //% block
     export function connectToChannel(channel: number) {
-
+        radio.setGroup(channel);
     }
 
     //% block
-    export function calibrate(channel: number) {
-        drone_instance.calibrate();
-    }
+    export function calibrate(samples: number = 100) {
+        if (safety.estop) return;
 
-    //% block
-    export function arm() {
+        gyro.calibration.x = 0;
+        gyro.calibration.y = 0;
+        gyro.calibration.z = 0;
 
-    }
+        for (let i = 0; i < samples; i++) {
+            readTelemetry(true, true, false, false);
+            gyro.calibration.x += gyro.x;
+            gyro.calibration.y += gyro.y;
+            gyro.calibration.z += gyro.z;
 
-    //% block
-    export function disarm() {
+            acc.calibration.x += acc.x;
+            acc.calibration.y += acc.y;
+            acc.calibration.z += acc.z;
+            basic.pause(5);
+        }
 
+        gyro.calibration.x /= samples;
+        gyro.calibration.y /= samples;
+        gyro.calibration.z /= samples;
+
+        acc.calibration.x /= samples;
+        acc.calibration.y /= samples;
+        acc.calibration.z /= samples;
+        
+        acc.pitch_offset = -57.295 * Math.atan2(acc.y, acc.z);
+        acc.roll_offset = -57.295 * Math.atan2(acc.x, acc.z);
     }
 
     //% block
     export function setThrottle(amount: number) {
-
+        drone.throttle = Math.min(Math.max(amount, 0), 100);
     }
 
     //% block
     export function setPitch(amount: number) {
-
+        drone.pitch = Math.min(Math.max(amount, -45), 45);
     }
 
     //% block
     export function setRoll(amount: number) {
-
+        drone.roll = Math.min(Math.max(amount, -45), 45);
     }
 
     //% block
     export function setYaw(amount: number) {
+        drone.yaw = amount;
+    }
+}
 
+//% color="#deae10ff" weight=100
+namespace AirbitRemote {
+    interface Controls {
+        throttle: number,
+        pitch: number,
+        roll: number,
+        yaw: number
+    }
+
+    let controls: Controls;
+    let estop: boolean = false;
+
+    //% block
+    export function initialise() {
+        controls = {
+            throttle: 0,
+            pitch: 0,
+            roll: 0,
+            yaw: 0
+        }
+    }
+
+    //% block
+    export function connectToChannel(channel: number) {
+        radio.setGroup(channel);
     }
 
     //% block
     export function emergencyStop() {
+        radio.sendString("e");
         estop = true;
     }
-}
 
-namespace AirbitRemote {
     //% block
-    export function connectToChannel(channel: number) {
-        
+    export function setThrottle(amount: number) {
+        controls.throttle = Math.min(Math.max(amount, 0), 100);
+    }
+
+    //% block
+    export function setPitch(amount: number) {
+        controls.pitch = Math.min(Math.max(amount, -45), 45);
+    }
+
+    //% block
+    export function setRoll(amount: number) {
+        controls.roll = Math.min(Math.max(amount, -45), 45);
+    }
+
+    //% block
+    export function setYaw(amount: number) {
+        controls.yaw = amount;
+    }
+
+    //% block
+    export function changeThrottle(amount: number) {
+        controls.throttle = Math.min(Math.max(controls.throttle + amount, 0), 100);
+    }
+
+    //% block
+    export function changePitch(amount: number) {
+        controls.pitch = Math.min(Math.max(controls.pitch + amount, -45), 45);
+    }
+
+    //% block
+    export function changeRoll(amount: number) {
+        controls.roll = Math.min(Math.max(controls.roll + amount, -45), 45);
+    }
+
+    //% block
+    export function changeYaw(amount: number) {
+        controls.roll += amount;
+    }
+
+    //% block
+    export function arm() {
+        radio.sendString('a');
+    }
+
+    //% block
+    export function disarm() {
+        radio.sendString('d');
+    }
+
+    //% block
+    export function sendControls() {
+        if (estop) return;
+
+        radio.sendValue('t', controls.throttle);
+        radio.sendValue('p', controls.pitch);
+        radio.sendValue('r', controls.roll);
+        radio.sendValue('y', controls.yaw);
     }
 }
