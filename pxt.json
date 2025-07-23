@@ -1,5 +1,5 @@
 {
-    "name": "AB2 V25",
+    "name": "Air:Bit V2",
     "description": "",
     "dependencies": {
         "core": "*",
@@ -16,14 +16,6 @@
     "testFiles": [
         "test.ts"
     ],
-    "targetVersions": {
-        "branch": "v3.0.61",
-        "tag": "v3.0.61",
-        "commits": "https://github.com/microsoft/pxt-microbit/commits/9ff91acb8524c6a52fee90cf7194a4643c424363",
-        "target": "4.1.45",
-        "pxt": "6.0.35",
-        "targetId": "microbit"
-    },
     "supportedTargets": [
         "microbit"
     ],
