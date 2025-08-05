@@ -1,12 +1,16 @@
 enum ControlSignals {
-    throttle = 't',
-    pitch = 'p',
-    roll = 'r',
-    yaw = 'y',
-    arm = 'a',
-    disarm = 'd',
-    estop = 'e'
+    throttle = 0,
+    pitch = 1,
+    roll = 2,
+    yaw = 3,
+    arm = 4,
+    disarm = 5,
+    estop = 6
 }
+
+const controlSignalMap: Array<string> = [
+    't', 'p', 'r', 'y', 'a', 'd', 'e'
+];
 
 interface Motors {
     M0: number,
@@ -30,6 +34,11 @@ interface Safety {
     crashed: boolean,
     armed: boolean,
     low_battery: boolean
+}
+
+interface Handler {
+    name: string,
+    func: (value?: number) => void
 }
 
 class Vector3 {
@@ -176,7 +185,7 @@ class Gyroscope {
         this.id = pins.i2cReadNumber(this.imu.address, NumberFormat.Int16BE, false) >> 8;
 
         if (this.id <= 0) {
-            throw "Gyroscope not found!";
+        basic.showString("Gyroscope not found!");
         }
 
         this.imu.writeRegister(this.imu.config, 0x00, false);
@@ -191,6 +200,32 @@ class Gyroscope {
         this.reading.x = pins.i2cReadNumber(this.imu.address, NumberFormat.Int16BE, true);
         this.reading.y = pins.i2cReadNumber(this.imu.address, NumberFormat.Int16BE, true);
         this.reading.z = pins.i2cReadNumber(this.imu.address, NumberFormat.Int16BE, false);
+    }
+
+    calibrate(samples: number = 100) {
+        basic.showIcon(IconNames.Confused);
+        this.reference.x = 0;
+        this.reference.y = 0;
+        this.reference.z = 0;
+
+        for (let i = 0; i < samples; i++) {
+            this.read();
+
+            this.reference.x += this.reading.x;
+            this.reference.y += this.reading.y;
+            this.reference.z += this.reading.z;
+            
+            basic.pause(5);
+        }
+
+        this.reference.x /= samples;
+        this.reference.y /= samples;
+        this.reference.z /= samples;
+        
+        this.imu.accelerometer.reference.pitch = -57.295 * Math.atan2(this.imu.accelerometer.reading.y, this.imu.accelerometer.reading.z);
+        this.imu.accelerometer.reference.roll = -57.295 * Math.atan2(this.imu.accelerometer.reading.x, this.imu.accelerometer.reading.z);
+
+        basic.showIcon(IconNames.Happy);
     }
 };
 
@@ -246,11 +281,11 @@ class PID {
     integral_range: number = 5;
     integral_limit: number = 4;
     yaw_limit: number = 50;
-    roll_pitch_p: number = 0.7;
+    roll_pitch_p: number = 0.9;
     roll_pitch_i: number = 0.004;
     roll_pitch_d: number = 15;
-    yaw_p: number = 4;
-    yaw_d: number = 10;
+    yaw_p: number = 5;
+    yaw_d: number = 70;
 
     constructor() {}
 
@@ -292,26 +327,27 @@ class PID {
         );
 
         let throttle_scaled = 2.55*drone.controls.throttle;
+        let en = (throttle_scaled > 0) ? 1 : 0;
 
-        drone.motors.M0 = Math.min(
+        drone.motors.M0 = en * Math.min(
             Math.max(
                 Math.round(throttle_scaled + this.correction.roll + this.correction.pitch + this.correction.yaw), 0
             ), 255
         );
 
-        drone.motors.M1 = Math.min(
+        drone.motors.M1 = en * Math.min(
             Math.max(
                 Math.round(throttle_scaled + this.correction.roll - this.correction.pitch - this.correction.yaw), 0
             ), 255
         );
 
-        drone.motors.M2 = Math.min(
+        drone.motors.M2 = en * Math.min(
             Math.max(
                 Math.round(throttle_scaled - this.correction.roll + this.correction.pitch - this.correction.yaw), 0
             ), 255
         );
 
-        drone.motors.M3 = Math.min(
+        drone.motors.M3 = en * Math.min(
             Math.max(
                 Math.round(throttle_scaled - this.correction.roll - this.correction.pitch + this.correction.yaw), 0
             ), 255
@@ -373,18 +409,39 @@ class IMU {
 }
 
 class PCA {
-    address = 98;
-    pwm0 = 2;
-    pwm1 = 3;
-    pwm2 = 4;
-    pwm3 = 5;
+    address: number = 98;
+    pwm0: number = 2;
+    pwm1: number = 3;
+    pwm2: number = 4;
+    pwm3: number = 5;
 
-    constructor() {}
+    mode1: number = 0;
+    mode2: number = 1;
+    ledout: number = 8;
 
-    writeRegister(register: number, value: number) {
+    mode1_config: number = 128;
+    mode2_config: number = 5;
+
+    id: number = 0;
+
+    constructor() {
+        this.writeRegister(this.mode1, this.mode1_config);
+        this.writeRegister(this.mode2, this.mode2_config);
+        this.writeRegister(this.ledout, 170);
+        this.writeMotors({M0: 0, M1: 0, M2: 0, M3: 0});
+
+        pins.i2cWriteNumber(this.address, this.mode2, NumberFormat.UInt8BE, true);
+        this.id = pins.i2cReadNumber(this.address, NumberFormat.UInt8BE, false);
+
+        if (!this.id) {
+            basic.showString("PCA not found!");
+        }
+    }
+
+    writeRegister(register: number, value: number, repeat: boolean = false) {
         pins.i2cWriteNumber(
             this.address, register << 8 | value,
-            NumberFormat.UInt16BE, false
+            NumberFormat.UInt16BE, repeat
         );
     }
 
@@ -408,138 +465,201 @@ class PCA {
 }
 
 class Drone {
-        throttle: number = 0;
-        motors: Motors = {
-            M0: 0,
-            M1: 0,
-            M2: 0,
-            M3: 0
-        };
+    motors: Motors = {
+        M0: 0,
+        M1: 0,
+        M2: 0,
+        M3: 0
+    };
 
-        voltage: number = 0.0;
-        init_state: boolean = false;
+    voltage: number = 0.0;
+    init_state: boolean = false;
 
-        safety: Safety = {
-            estop: false,
-            crashed: false,
-            armed: false,
-            low_battery: false
-        }
+    safety: Safety = {
+        estop: false,
+        crashed: false,
+        armed: false,
+        low_battery: false
+    }
 
-        controls: Controls = {
+    controls: Controls = {
+        throttle: 0,
+        pitch: 0,
+        roll: 0,
+        yaw: 0
+    };
+
+    physics_timer: Timer = new Timer();
+    pid: PID;
+    imu: IMU;
+    pca: PCA;
+
+    battery_scale_factor: number = 0.00594;
+    battery_voltage_smooth: number = 0;
+    battery_voltage: number = 0;
+    battery_level: number = 0;
+    charging: boolean = false;
+    charged: boolean = true;
+    A0: number = 0;
+
+    handlers: Array<Handler>;
+
+    constructor() {
+        i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
+        this.pid = new PID();
+        this.imu = new IMU();
+        this.pca = new PCA();
+        this.handlers = [];
+        this.init_state = true;
+    }
+
+    arm() {
+        this.controls = {
             throttle: 0,
             pitch: 0,
             roll: 0,
             yaw: 0
         };
 
-        physics_timer: Timer = new Timer();
-        pid: PID;
-        imu: IMU;
-        pca: PCA;
+        this.imu.reset();
+        this.safety.crashed = false;
+        this.safety.armed = true;
+    }
 
-        battery_scale_factor: number = 0.00594;
-        battery_voltage_smooth: number = 0;
-        battery_voltage: number = 0;
-        battery_level: number = 0;
-
-        constructor() {
-            i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
-            this.pid = new PID();
-            this.imu = new IMU();
-            this.pca = new PCA();
-            this.init_state = true;
+    disarm() {
+        this.motors = {
+            M0: 0,
+            M1: 0,
+            M2: 0,
+            M3: 0
         }
 
-        arm() {
-            this.imu.reset();
-            this.safety.armed = true;
-        }
+        this.pca.writeMotors(this.motors);
+        this.imu.reset();
 
-        disarm() {
-            this.motors = {
-                M0: 0,
-                M1: 0,
-                M2: 0,
-                M3: 0
+        this.safety.armed = false;
+    }
+
+    estop() {
+        this.safety.estop = true;
+        this.disarm();
+    }
+
+    update(stabilise: boolean = true) {
+        this.A0 = pins.analogReadPin(AnalogPin.P0);
+        this.battery_voltage = this.A0 * this.battery_scale_factor;
+        this.battery_voltage_smooth = 0.1*this.battery_voltage + 0.9*this.battery_voltage_smooth;
+        this.battery_level = (this.battery_voltage_smooth - 3.4)/0.8;
+        this.safety.low_battery = (this.battery_level <= 0);
+        this.checkCharging();
+
+        if (this.charging) {
+            this.safety.low_battery = false;
+
+            if (this.safety.armed) {
+                this.disarm();
             }
-
-            this.pca.writeMotors(this.motors);
-            this.imu.reset();
-
-            this.safety.armed = false;
         }
 
-        estop() {
-            this.safety.estop = true;
+        if (this.safety.estop || !this.safety.armed) return;
+
+        if (this.safety.low_battery) {
             this.disarm();
+            return;
         }
 
-        checkBatteryLevel() {
-            this.safety.low_battery = (this.battery_level <= 0);
+        this.imu.accelerometer.read();
+        this.imu.gyroscope.read();
+        this.calculateAngles();
+        // False positive?
+        // this.safety.crashed = (Math.abs(this.imu.gyroscope.angles.roll) > 90);
+
+        if (this.safety.crashed) {
+            this.estop();
+            return;
         }
 
-        checkDroneCrashed() {
-            this.safety.crashed = (Math.abs(this.imu.gyroscope.angles.roll) > 90) || (Math.abs(this.imu.gyroscope.angles.pitch) > 90);
+        if (stabilise) {
+            this.pid.update(this);
+        }
 
-            if (this.safety.crashed) {
-                this.estop();
+        this.pca.writeMotors(this.motors);
+    }
+
+    calculateAngles() {
+        let dt = this.physics_timer.get_delta();
+        this.imu.accelerometer.angles.pitch = -57.295*Math.atan2(this.imu.accelerometer.reading.y, this.imu.accelerometer.reading.z) - this.imu.accelerometer.reference.pitch;
+        this.imu.accelerometer.angles.roll = -57.295*Math.atan2(this.imu.accelerometer.reading.x, this.imu.accelerometer.reading.z) - this.imu.accelerometer.reference.roll;
+
+        let temp = -0.00762939*dt;
+        this.imu.gyroscope.delta.set(this.imu.gyroscope.reading);
+        this.imu.gyroscope.delta.iSub(this.imu.gyroscope.reference);
+        this.imu.gyroscope.delta.iScale(temp);
+        this.imu.gyroscope.delta.y *= -1;
+
+        this.imu.gyroscope.angles.roll = 0.01*this.imu.accelerometer.angles.roll + 0.99*(this.imu.gyroscope.delta.y + this.imu.gyroscope.angles.roll);
+        this.imu.gyroscope.angles.pitch = 0.01*this.imu.accelerometer.angles.pitch + 0.99*(this.imu.gyroscope.delta.x + this.imu.gyroscope.angles.pitch);
+    }
+
+    checkCharging() {
+        if (this.A0 == 0) {
+            this.charging = false;
+            this.charged = false;
+            basic.showLeds(`
+                # . . . .
+                . # . . .
+                . . # . .
+                . . . # .
+                . . . . #
+            `);
+        } else if (this.A0 > 780) {
+            if (this.A0 > 950) {
+                this.charging = false;
+                basic.showString("Charged");
+            } else {
+                this.charging = true;
+
+                basic.showLeds(`
+                    . . # . .
+                    . # . # .
+                    . # . # .
+                    . # . # .
+                    . # # # .
+                `);
+
+                basic.showLeds(`
+                    . . # . .
+                    . # . # .
+                    . # . # .
+                    . # # # .
+                    . # # # .
+                `);
+
+                basic.showLeds(`
+                    . . # . .
+                    . # . # .
+                    . # # # .
+                    . # # # .
+                    . # # # .
+                `);
+
+                basic.showLeds(`
+                    . . # . .
+                    . # # # .
+                    . # # # .
+                    . # # # .
+                    . # # # .
+                `);
             }
+        } else {
+            this.charging = false;
         }
+    }
+};
 
-        update(stabilise: boolean = true) {
-            if (this.safety.estop || !this.safety.armed) return;
-
-            this.calculateBatteryVoltage();
-            this.smoothBatteryVoltage();
-            this.calculateBatteryLevel();
-            this.checkBatteryLevel();
-            if (this.safety.low_battery) return;
-
-            this.imu.accelerometer.read();
-            this.imu.gyroscope.read();
-            this.calculateAngles();
-            this.checkDroneCrashed();
-            if (this.safety.crashed) return;
-
-            if (stabilise) {
-                this.pid.update(this);
-            }
-
-            this.pca.writeMotors(this.motors);
-        }
-
-        calculateAngles() {
-            let dt = this.physics_timer.get_delta();
-            this.imu.accelerometer.angles.pitch = -57.295*Math.atan2(this.imu.accelerometer.reading.y, this.imu.accelerometer.reading.z) - this.imu.accelerometer.reference.pitch;
-            this.imu.accelerometer.angles.roll = -57.295*Math.atan2(this.imu.accelerometer.reading.x, this.imu.accelerometer.reading.z) - this.imu.accelerometer.reference.roll;
-
-            let temp = -0.00762939*dt;
-            this.imu.gyroscope.delta.set(this.imu.gyroscope.reading);
-            this.imu.gyroscope.delta.iSub(this.imu.gyroscope.reference);
-            this.imu.gyroscope.delta.iScale(temp);
-            this.imu.gyroscope.delta.y *= -1;
-
-            this.imu.gyroscope.angles.roll = 0.01*this.imu.accelerometer.angles.roll + 0.99*(this.imu.gyroscope.delta.y + this.imu.gyroscope.angles.roll);
-            this.imu.gyroscope.angles.pitch = 0.01*this.imu.accelerometer.angles.pitch + 0.99*(this.imu.gyroscope.delta.x + this.imu.gyroscope.angles.pitch);
-        }
-
-        calculateBatteryVoltage() {
-            this.battery_voltage = pins.analogReadPin(AnalogPin.P0) * this.battery_scale_factor;
-        }
-
-        smoothBatteryVoltage() {
-            this.battery_voltage_smooth = 0.1*this.battery_voltage + 0.9*this.battery_voltage_smooth;
-        }
-
-        calculateBatteryLevel() {
-            this.battery_level = (this.battery_voltage_smooth - 3.4)/0.8;
-        }
-    };
-
-//% color="#19caad" weight=100
+//% color="#caac19" weight=100
 namespace AirBit {
-    let drone: Drone;
+    let drone: Drone = new Drone();
     
     //% block="init()"
     //% group="Setup"
@@ -627,7 +747,7 @@ namespace AirBit {
         drone.update(stabilise);
     }
 
-    //% block="setWiFiChannel($channel)"
+    //% block="setWifiChannel($channel)"
     //% group="Communication"
     export function setWifiChannel(channel: number) {
         radio.setGroup(channel);
@@ -642,13 +762,58 @@ namespace AirBit {
     //% draggableParameters="reporter"
     //% block="onControlReceived($signal $value)"
     //% group="Communication"
-    export function onControlReceived(signal: ControlSignals, handler: (value: number) => void) {
-        radio.onReceivedValue(
-            function (name: string, value: number) {
-                if (name == signal) {
-                    handler(value);
-                }
-            }
-        );
+    export function onControlReceived(signal: ControlSignals, handler: (value?: number) => void) {
+        drone.handlers.push({
+            name: controlSignalMap[signal],
+            func: handler
+        });
     }
+
+    //% block="setThrottle($amount)"
+    //% group="Control"
+    export function setThrottle(amount: number) {
+        drone.controls.throttle = amount;
+    }
+
+    //% block="setPitch($amount)"
+    //% group="Control"
+    export function setPitch(amount: number) {
+        drone.controls.pitch = amount;
+    }
+
+    //% block="setRoll($amount)"
+    //% group="Control"
+    export function setRoll(amount: number) {
+        drone.controls.roll = amount;
+    }
+
+    //% block="setYaw($amount)"
+    //% group="Control"
+    export function setYaw(amount: number) {
+        drone.controls.yaw = amount;
+    }
+
+    //% block="throttle()"
+    //% group="State"
+    export function throttle(): number {
+        return drone.controls.throttle;
+    }
+
+    //% block="calibrate($samples)"
+    //% group="Setup"
+    //% samples.defl=100
+    export function calibrate(samples: number) {
+        drone.imu.gyroscope.calibrate(samples);
+    }
+
+    //% block="readControls($name, $value)"
+    //% group="Communication"
+    export function readControls(name: string, value: number) {
+        for (let handler of drone.handlers) {
+            if (name == handler.name) {
+                handler.func(value);
+                break;
+            }
+        }
+    };
 };
