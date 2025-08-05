@@ -627,7 +627,7 @@ namespace AirBit {
     }
 
     //% block="setWiFiChannel($channel)"
-    //% group="Control"
+    //% group="Communication"
     export function setWifiChannel(channel: number) {
         radio.setGroup(channel);
     }
@@ -640,7 +640,7 @@ namespace AirBit {
 
     //% draggableParameters="reporter"
     //% block="onControlReceived($signal $value)"
-    //% group="Control"
+    //% group="Communication"
     export function onControlReceived(signal: ControlSignals, handler: (value: number) => void) {
         radio.onReceivedValue(
             function (name: string, value: number) {
