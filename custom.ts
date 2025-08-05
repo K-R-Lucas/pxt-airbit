@@ -537,7 +537,7 @@ class Drone {
         }
     };
 
-//% color="#19caadff" weight=100
+//% color="#19caad" weight=100
 namespace AirBit {
     let drone: Drone;
     
