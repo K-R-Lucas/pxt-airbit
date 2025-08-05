@@ -565,57 +565,57 @@ namespace AirBit {
         drone = undefined;
     }
 
-    //% block="getGyroPitch()"
+    //% block="gyroPitch()"
     //% group="Telemetry"
-    export function getGyroPitch(): number {
+    export function gyroPitch(): number {
         return drone.imu.gyroscope.angles.pitch;
     }
 
-    //% block="getGyroRoll()"
+    //% block="gyroRoll()"
     //% group="Telemetry"
-    export function getGyroRoll(): number {
+    export function gyroRoll(): number {
         return drone.imu.gyroscope.angles.roll;
     }
 
-    //% block="getGyroYaw()"
+    //% block="gyroYaw()"
     //% group="Telemetry"
-    export function getGyroYaw(): number {
+    export function gyroYaw(): number {
         return drone.imu.gyroscope.angles.yaw;
     }
 
-    //% block="getAccelPitch()"
+    //% block="accelPitch()"
     //% group="Telemetry"
-    export function getAccelPitch(): number {
+    export function accelPitch(): number {
         return drone.imu.accelerometer.angles.pitch;
     }
 
-    //% block="getAccelRoll()"
+    //% block="accelRoll()"
     //% group="Telemetry"
-    export function getAccelRoll(): number {
+    export function accelRoll(): number {
         return drone.imu.accelerometer.angles.roll;
     }
 
-    //% block="getAccelYaw()"
+    //% block="accelYaw()"
     //% group="Telemetry"
-    export function getAccelYaw(): number {
+    export function accelYaw(): number {
         return drone.imu.accelerometer.angles.yaw;
     }
 
-    //% block="isArmed()"
+    //% block="armed()"
     //% group="State"
-    export function isArmed(): boolean {
+    export function armed(): boolean {
         return drone.safety.armed;
     }
 
-    //% block="hasCrashed()"
+    //% block="crashed()"
     //% group="State"
-    export function hasCrashed(): boolean {
+    export function crashed(): boolean {
         return drone.safety.crashed;
     }
 
-    //% block="isEmergencyStopped()"
+    //% block="emergencyStopped()"
     //% group="State"
-    export function isEmergencyStopped(): boolean {
+    export function emergencyStopped(): boolean {
         return drone.safety.estop;
     }
 
@@ -632,9 +632,9 @@ namespace AirBit {
         radio.setGroup(channel);
     }
 
-    //% block="isInitialised()"
+    //% block="initialised()"
     //% group="State"
-    export function isInitialised(): boolean {
+    export function initialised(): boolean {
         return (drone !== undefined) && drone.init_state;
     }
 
