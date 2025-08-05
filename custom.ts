@@ -176,7 +176,7 @@ class Gyroscope {
         this.id = pins.i2cReadNumber(this.imu.address, NumberFormat.Int16BE, false) >> 8;
 
         if (this.id <= 0) {
-            throw new Error("Gyroscope not found!");
+            throw "Gyroscope not found!";
         }
 
         this.imu.writeRegister(this.imu.config, 0x00, false);
@@ -331,11 +331,13 @@ class IMU {
     accel_config: number = 0x1D;
     who_am_i: number = 0x75;
 
-    accelerometer: Accelerometer = new Accelerometer(this);
-    gyroscope: Gyroscope = new Gyroscope(this);
+    accelerometer: Accelerometer;
+    gyroscope: Gyroscope;
 
     constructor() {
         this.reset();
+        this.accelerometer = new Accelerometer(this);
+        this.gyroscope = new Gyroscope(this);
         this.gyroscope.init();
         this.accelerometer.init()
     }
