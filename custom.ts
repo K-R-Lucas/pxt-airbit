@@ -545,100 +545,100 @@ namespace AirBit {
     }
 
     //% block="arm()"
-    //% group="safety"
+    //% group="Safety"
     export function arm() {
         drone.arm();
     }
 
     //% block="disarm()"
-    //% group="safety"
+    //% group="Safety"
     export function disarm() {
         drone.disarm();
     }
 
     //% block="emergencyStop()"
-    //% group="safety"
+    //% group="Safety"
     export function emergencyStop() {
         drone.estop();
         drone = undefined;
     }
 
     //% block="getGyroPitch()"
-    //% group="telemetry"
+    //% group="Telemetry"
     export function getGyroPitch(): number {
         return drone.imu.gyroscope.angles.pitch;
     }
 
     //% block="getGyroRoll()"
-    //% group="telemetry"
+    //% group="Telemetry"
     export function getGyroRoll(): number {
         return drone.imu.gyroscope.angles.roll;
     }
 
     //% block="getGyroYaw()"
-    //% group="telemetry"
+    //% group="Telemetry"
     export function getGyroYaw(): number {
         return drone.imu.gyroscope.angles.yaw;
     }
 
     //% block="getAccelPitch()"
-    //% group="telemetry"
+    //% group="Telemetry"
     export function getAccelPitch(): number {
         return drone.imu.accelerometer.angles.pitch;
     }
 
     //% block="getAccelRoll()"
-    //% group="telemetry"
+    //% group="Telemetry"
     export function getAccelRoll(): number {
         return drone.imu.accelerometer.angles.roll;
     }
 
     //% block="getAccelYaw()"
-    //% group="telemetry"
+    //% group="Telemetry"
     export function getAccelYaw(): number {
         return drone.imu.accelerometer.angles.yaw;
     }
 
     //% block="isArmed()"
-    //% group="state"
+    //% group="State"
     export function isArmed(): boolean {
         return drone.safety.armed;
     }
 
     //% block="hasCrashed()"
-    //% group="state"
+    //% group="State"
     export function hasCrashed(): boolean {
         return drone.safety.crashed;
     }
 
     //% block="isEmergencyStopped()"
-    //% group="state"
+    //% group="State"
     export function isEmergencyStopped(): boolean {
         return drone.safety.estop;
     }
 
     //% block="update(stabilise$stabilise)"
-    //% group="control"
+    //% group="Control"
     //% stabilise.defl=true
     export function update(stabilise: boolean) {
         drone.update(stabilise);
     }
 
     //% block="setWiFiChannel($channel)"
-    //% group="control"
+    //% group="Control"
     export function setWifiChannel(channel: number) {
         radio.setGroup(channel);
     }
 
     //% block="isInitialised()"
-    //% group="setup"
+    //% group="State"
     export function isInitialised(): boolean {
         return (drone !== undefined) && drone.init_state;
     }
 
     //% draggableParameters="reporter"
     //% block="onControlReceived($signal $value)"
-    //% group="control"
+    //% group="Control"
     export function onControlReceived(signal: ControlSignals, handler: (value: number) => void) {
         radio.onReceivedValue(
             function (name: string, value: number) {
