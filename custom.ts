@@ -1,26 +1,32 @@
 enum ControlSignals {
-    throttle = 0,
+    estop = 0,
     pitch = 1,
-    roll = 2,
-    yaw = 3,
-    arm = 4,
-    disarm = 5,
-    estop = 6
+    armed = 2,
+    roll = 3,
+    throttle = 4,
+    yaw = 5
 }
+
+enum MotorLabels {
+    M0 = 0,
+    M1 = 1,
+    M2 = 2,
+    M3 = 3
+};
 
 enum PIDAxis {
     rollPitch = 0,
     yaw = 1
-}
+};
 
 const controlSignalMap: Array<string> = [
-    't', 'p', 'r', 'y', 'a', 'd', 'e'
+    'e', 'p', 'a', 'r', 't', 'y'
 ];
 
 interface Position {
     x: number,
     y: number
-}
+};
 
 const ledBinPositions: Array<Position> = [
     {x: 0, y: 0},
@@ -31,36 +37,36 @@ const ledBinPositions: Array<Position> = [
     {x: 3, y: 2},
     {x: 3, y: 3},
     {x: 4, y: 3},
-]
+];
 
 interface Motors {
     M0: number,
     M1: number,
     M2: number,
     M3: number
-}
+};
 
 interface Angles {
     pitch: number,
     roll: number,
     yaw: number
-}
+};
 
 interface Controls extends Angles {
     throttle: number
-}
+};
 
 interface Safety {
     estop: boolean,
     crashed: boolean,
     armed: boolean,
     low_battery: boolean
-}
+};
 
 interface Handler {
     name: string,
-    func: (value?: number) => void
-}
+    func: (value?: number | Boolean) => void
+};
 
 class Vector3 {
     x = 0;
@@ -142,7 +148,7 @@ class Vector3 {
         this.y = v.y;
         this.z = v.z;
     }
-}
+};
 
 class Accelerometer {
     reading: Vector3 = new Vector3(0, 0, 0);
@@ -157,7 +163,6 @@ class Accelerometer {
         yaw: 0
     };
 
-    config1: number = 0x1C;
     config2: number = 0x1D;
     imu: IMU;
 
@@ -166,7 +171,6 @@ class Accelerometer {
     }
 
     init() {
-        this.imu.writeRegister(this.config1, 0b00000000, false);
         this.imu.writeRegister(this.config2, 0b00000011, false);
     }
 
@@ -269,7 +273,7 @@ class Timer {
         this.t0 = this.t1;
         return this.dt;
     }
-}
+};
 
 class PID {
     active: boolean = true;
@@ -328,15 +332,15 @@ class PID {
         this.last.roll = this.angles.roll;
         this.last.yaw = this.angles.yaw;
 
-        // if (drone.controls.throttle > 50) {
-        //     if (Math.abs(this.angles.pitch) < this.integral_range) {
-        //         this.integral.pitch += this.angles.pitch;
-        //     }
+        if (drone.controls.throttle > 50) {
+            if (Math.abs(this.angles.pitch) < this.integral_range) {
+                this.integral.pitch += this.angles.pitch;
+            }
 
-        //     if (Math.abs(this.angles.roll) < this.integral_range) {
-        //         this.integral.roll += this.angles.roll;
-        //     }
-        // }
+            if (Math.abs(this.angles.roll) < this.integral_range) {
+                this.integral.roll += this.angles.roll;
+            }
+        }
 
         this.correction.pitch = Math.min(
             Math.max(this.integral.pitch*this.roll_pitch_i, -this.integral_limit), this.integral_limit
@@ -379,7 +383,7 @@ class PID {
             ), 255
         );
     }
-}
+};
 
 class IMU {
     id = 0x75;
@@ -398,8 +402,8 @@ class IMU {
         this.reset();
         basic.pause(500);
 
-        this.accelerometer = new Accelerometer(this);
         this.gyroscope = new Gyroscope(this);
+        this.accelerometer = new Accelerometer(this);
         this.gyroscope.init();
         this.accelerometer.init()
     }
@@ -417,7 +421,7 @@ class IMU {
         this.writeRegister(this.signal_reset, 0b00000011);
         this.writeRegister(this.user_control, 0b00000001);
     }
-}
+};
 
 class PCA {
     address: number = 98;
@@ -473,7 +477,133 @@ class PCA {
             this.pwm3, motors.M0
         );
     }
+};
+
+function as_uint32(v: number): number {
+    let buf = pins.createBuffer(4);
+    buf.setNumber(NumberFormat.Float32BE, 0, v);
+    return buf.getNumber(NumberFormat.UInt32BE, 0);
 }
+
+function as_float32(v: number): number {
+    let buf = pins.createBuffer(4);
+    buf.setNumber(NumberFormat.UInt32BE, 0, v);
+    return buf.getNumber(NumberFormat.Float32BE, 0);
+}
+
+function f16_to_f32(x: number): number {
+    let e = Math.trunc((x & 0x7C00) >> 10);
+    let m = Math.trunc((x & 0x03FF) << 13);
+    let v = Math.trunc(as_uint32(x) >> 23);
+
+    return as_float32(
+        (x & 0x8000) << 16 | (+(e != 0)) * ((e + 112) << 23 | m)
+                           | ((+(e == 0)) & (+(m != 0))) * (
+                                (v - 32) << 23 | ((m << (150 - v)) & 0x007FE000)
+                           ));
+}
+
+function f32_to_f16(x: number): number {
+    let b = Math.trunc(as_uint32(x) + 0x00001000);
+    let e = Math.trunc((b & 0x7F800000) >> 23);
+    let m = Math.trunc(b & 0x007FFFFF);
+
+    return (b & 0x80000000) >> 16 | (+(e > 112)) * ((((e - 112) << 10) & 0x7C00) | m >> 13)
+                                  | ((+(e < 113)) & (+(e > 101))) * ((((0x007FF000 + m) >> (125 - e)) + 1) >> 1)
+                                  | (+(e > 143)) * 0x7FFF;
+
+}
+
+class State {
+    throttle: number = 0;
+    pitch: number = 0;
+    roll: number = 0;
+    yaw: number = 0;
+    armed: Boolean = false;
+    estop: Boolean = false;
+    crashed: Boolean = false;
+    charging: Boolean = false;
+    charged: Boolean = false;
+    low_battery: Boolean = false;
+    drone: Drone;
+    acc: Vector3;
+
+    packet: Buffer;
+
+    constructor(drone: Drone) {
+        this.packet = Buffer.create(15);
+        this.acc = new Vector3(0, 0, 0);
+
+        this.drone = drone;
+    }
+
+    getPacket() {
+        this.packet.setUint8(0,
+            +this.drone.safety.armed
+            | +this.drone.safety.estop << 1
+            | +this.drone.safety.crashed << 2
+            | +this.drone.charging << 3
+            | +this.drone.charged << 4
+            | +this.drone.safety.low_battery << 5
+        );
+
+        this.packet.setNumber(NumberFormat.UInt16BE, 1, f32_to_f16(this.drone.battery_voltage));
+        this.packet.setNumber(NumberFormat.UInt16BE, 3, f32_to_f16(this.drone.imu.gyroscope.angles.pitch));
+        this.packet.setNumber(NumberFormat.UInt16BE, 5, f32_to_f16(this.drone.imu.gyroscope.angles.roll));
+        this.packet.setNumber(NumberFormat.UInt16BE, 7, f32_to_f16(this.drone.imu.gyroscope.angles.yaw));
+        this.packet.setNumber(NumberFormat.UInt16BE, 9, f32_to_f16(this.drone.imu.accelerometer.reading.x));
+        this.packet.setNumber(NumberFormat.UInt16BE, 11, f32_to_f16(this.drone.imu.accelerometer.reading.y));
+        this.packet.setNumber(NumberFormat.UInt16BE, 13, f32_to_f16(this.drone.imu.accelerometer.reading.z));
+    }
+
+    loadPacket(packet: Buffer) {
+        let flags = packet.getUint8(0);
+        this.armed = !!(flags & 0b00000001);
+        this.estop = !!(flags & 0b00000010);
+
+        this.throttle = f16_to_f32(packet.getNumber(NumberFormat.UInt16BE, 1));
+        this.pitch =    f16_to_f32(packet.getNumber(NumberFormat.UInt16BE, 3));
+        this.roll =     f16_to_f32(packet.getNumber(NumberFormat.UInt16BE, 5));
+        this.yaw =      f16_to_f32(packet.getNumber(NumberFormat.UInt16BE, 7));
+
+        for (let handler of this.drone.handlers) {
+            switch (handler.name) {
+                case controlSignalMap[ControlSignals.estop]:
+                    handler.func(this.estop);
+                    break;
+                
+                case controlSignalMap[ControlSignals.pitch]:
+                    handler.func(this.pitch);
+                    break;
+            
+                case controlSignalMap[ControlSignals.armed]:
+                    handler.func(this.armed);
+                    break;
+            
+                case controlSignalMap[ControlSignals.roll]:
+                    handler.func(this.roll);
+                    break;
+            
+                case controlSignalMap[ControlSignals.throttle]:
+                    handler.func(this.throttle);
+                    break;
+            
+                case controlSignalMap[ControlSignals.yaw]:
+                    handler.func(this.yaw);
+                    break;
+            }
+        }
+    }
+
+    clear() {
+        this.pitch = 0;
+        this.armed = false;
+        this.roll = 0;
+        this.throttle = 0;
+        this.yaw = 0;
+        this.estop = false;
+    }
+};
 
 class Drone {
     motors: Motors = {
@@ -493,12 +623,7 @@ class Drone {
         low_battery: false
     }
 
-    controls: Controls = {
-        throttle: 0,
-        pitch: 0,
-        roll: 0,
-        yaw: 0
-    };
+    controls: State;
 
     physics_timer: Timer = new Timer();
     pid: PID;
@@ -517,6 +642,7 @@ class Drone {
 
     constructor() {
         i2crr.setI2CPins(DigitalPin.P2, DigitalPin.P1);
+        this.controls = new State(this);
         this.pid = new PID();
         this.imu = new IMU();
         this.pca = new PCA();
@@ -525,12 +651,7 @@ class Drone {
     }
 
     arm() {
-        this.controls = {
-            throttle: 0,
-            pitch: 0,
-            roll: 0,
-            yaw: 0
-        };
+        this.controls.clear();
 
         this.imu.reset();
         this.safety.crashed = false;
@@ -588,8 +709,7 @@ class Drone {
 
     update() {
         if (this.safety.estop || !this.safety.armed) return;
-        // False positive?
-        // this.safety.crashed = (Math.abs(this.imu.gyroscope.angles.roll) > 90);
+        this.safety.crashed = this.safety.armed && ((Math.abs(this.imu.gyroscope.angles.roll) > 90) || (Math.abs(this.imu.gyroscope.angles.pitch) > 90));
 
         if (this.safety.crashed) {
             this.estop();
@@ -670,8 +790,7 @@ class Drone {
     }
 };
 
-//% color="#caac19" weight=100
-//% groups=["Safety", "Setup", "Control", "Communication", "State", "Telemetry", "PID"]
+//% color="#caac19" weight=100 block="Air:Bit"
 namespace AirBit {
     let drone: Drone;
     
@@ -679,15 +798,6 @@ namespace AirBit {
     //% group="Setup"
     export function init() {
         drone = new Drone();
-
-        radio.onReceivedValue(function (name: string, value?: number) {
-            for (let handler of drone.handlers) {
-                if (name == handler.name) {
-                    handler.func(value);
-                    break;
-                }
-            }
-        });
 
         basic.forever(() => {drone.batteryWatchdog();});
         basic.forever(() => {drone.update();});
@@ -730,22 +840,22 @@ namespace AirBit {
         return drone.imu.gyroscope.angles.yaw;
     }
 
-    //% block="accelPitch()"
+    //% block="accelX()"
     //% group="Telemetry"
-    export function accelPitch(): number {
-        return drone.imu.accelerometer.angles.pitch;
+    export function accelX(): number {
+        return drone.imu.accelerometer.reading.x;
     }
 
-    //% block="accelRoll()"
+    //% block="accelY()"
     //% group="Telemetry"
-    export function accelRoll(): number {
-        return drone.imu.accelerometer.angles.roll;
+    export function accelY(): number {
+        return drone.imu.accelerometer.reading.y;
     }
 
-    //% block="accelYaw()"
+    //% block="accelZ()"
     //% group="Telemetry"
-    export function accelYaw(): number {
-        return drone.imu.accelerometer.angles.yaw;
+    export function accelZ(): number {
+        return drone.imu.accelerometer.reading.z;
     }
 
     //% block="armed()"
@@ -767,7 +877,7 @@ namespace AirBit {
     }
 
     //% block="setWifiChannel($channel)"
-    //% group="Communication"
+    //% group="Setup"
     export function setWifiChannel(channel: number) {
         radio.setGroup(channel);
     }
@@ -780,7 +890,7 @@ namespace AirBit {
 
     //% draggableParameters="reporter"
     //% block="onControlReceived($signal $value)"
-    //% group="Communication"
+    //% group="Control"
     export function onControlReceived(signal: ControlSignals, handler: (value?: number) => void) {
         drone.handlers.push({
             name: controlSignalMap[signal],
@@ -792,6 +902,26 @@ namespace AirBit {
     //% group="Control"
     export function setThrottle(amount: number) {
         drone.controls.throttle = amount;
+
+        if (!drone.pid.active) {
+            drone.motors.M0 = amount;
+            drone.motors.M1 = amount;
+            drone.motors.M2 = amount;
+            drone.motors.M3 = amount;
+        }
+    }
+
+    //% block="changeThrottle($amount)"
+    //% group="Control"
+    export function changeThrottle(amount: number) {
+        drone.controls.throttle += amount;
+
+        if (!drone.pid.active) {
+            drone.motors.M0 += amount;
+            drone.motors.M1 += amount;
+            drone.motors.M2 += amount;
+            drone.motors.M3 += amount;
+        }
     }
 
     //% block="setPitch($amount)"
@@ -825,20 +955,26 @@ namespace AirBit {
         drone.imu.gyroscope.calibrate(samples);
     }
 
-    //% block="readControls($name, $value)"
-    //% group="Communication"
-    export function readControls(name: string, value: number) {
-        
-    };
+    //% block="enableControls($enabled)"
+    //% group="Control"
+    //% enabled.defl=true
+    export function enableControls(enabled: boolean) {
+        if (enabled) {
+            radio.onReceivedBuffer(drone.controls.loadPacket);
+        } else {
+            radio.onReceivedBuffer((buffer: Buffer) => {});
+        }
+    }
 
     //% block="enableStabilisation($enabled)"
     //% group="Setup"
+    //% enabled.defl=true
     export function enableStabilisation(enabled: boolean) {
         drone.pid.active = enabled;
     }
 
     //% block="setP($value, $axis)"
-    //% group="PID"
+    //% group="Advanced"
     export function setP(value: number, axis: PIDAxis) {
         switch (axis) {
             case PIDAxis.rollPitch:
@@ -852,13 +988,13 @@ namespace AirBit {
     }
 
     //% block="setI($value)"
-    //% group="PID"
+    //% group="Advanced"
     export function setI(value: number) {
         drone.pid.roll_pitch_i = value;
     }
 
     //% block="setD($value, $axis)"
-    //% group="PID"
+    //% group="Advanced"
     export function setD(value: number, axis: PIDAxis) {
         switch (axis) {
             case PIDAxis.rollPitch:
@@ -868,20 +1004,6 @@ namespace AirBit {
             case PIDAxis.yaw:
                 drone.pid.yaw_d = value;
                 break;
-        }
-    }
-
-    //% block="displayIntegerBin($value)"
-    //% group="Telemetry"
-    export function displayIntegerBin(value: number) {
-        for (let i = 0; i < 8; i++) {
-            let pos = ledBinPositions[i];
-
-            if (value & (1<<i)) {
-                led.plot(pos.x, pos.y);
-            } else {
-                led.unplot(pos.x, pos.y);
-            }
         }
     }
 
@@ -904,4 +1026,26 @@ namespace AirBit {
     export function updateMotors() {
         drone.update();
     }
-};
+
+    //% block="getThrottleFor(motor$motor)"
+    //% group="Telemetry"
+    export function getThrottleFor(motor: MotorLabels): number {
+        switch (motor) {
+            case MotorLabels.M0:
+                return drone.motors.M0;
+                break;
+            
+            case MotorLabels.M1:
+                return drone.motors.M1;
+                break;
+
+            case MotorLabels.M2:
+                return drone.motors.M2;
+                break;
+
+            case MotorLabels.M3:
+                return drone.motors.M3;
+                break;
+        }
+    }
+}
